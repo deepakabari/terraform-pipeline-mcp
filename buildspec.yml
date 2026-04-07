@@ -11,7 +11,8 @@ phases:
     commands:
       - echo "Building project..."
       - npm run build
-
+      - mkdir -p dist
+      - cp -r src package.json dist/
 artifacts:
   files:
     - '**/*'
