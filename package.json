@@ -1,0 +1,13 @@
+{
+  "name": "node-express-crud",
+  "version": "1.0.0",
+  "description": "Sample CRUD operations for AWS CodePipeline",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "build": "echo 'No complicated build step needed for plain Express app, ready to deploy!'"
+  },
+  "dependencies": {
+    "express": "^4.21.0"
+  }
+}
