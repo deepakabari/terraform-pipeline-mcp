@@ -9,20 +9,6 @@ locals {
   }
 }
 
-# Artifacts Bucket (Required by Skill)
-resource "aws_s3_bucket" "artifacts" {
-  bucket        = "${var.bucket_name}-artifacts"
-  force_destroy = true
-  tags          = local.common_tags
-}
-
-resource "aws_s3_bucket_versioning" "artifacts_versioning" {
-  bucket = aws_s3_bucket.artifacts.id
-  versioning_configuration {
-    status = "Enabled"
-  }
-}
-
 # Static Website Bucket
 resource "aws_s3_bucket" "website" {
   bucket        = var.bucket_name
@@ -39,7 +25,6 @@ resource "aws_s3_bucket_website_configuration" "website" {
 
 resource "aws_s3_bucket_public_access_block" "website_pab" {
   bucket = aws_s3_bucket.website.id
-
   block_public_acls       = false
   block_public_policy     = false
   ignore_public_acls      = false
@@ -48,7 +33,6 @@ resource "aws_s3_bucket_public_access_block" "website_pab" {
 
 resource "aws_s3_bucket_policy" "website_policy" {
   bucket = aws_s3_bucket.website.id
-
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -61,38 +45,22 @@ resource "aws_s3_bucket_policy" "website_policy" {
       }
     ]
   })
-
-  depends_on = [
-    aws_s3_bucket_public_access_block.website_pab
-  ]
+  depends_on = [ aws_s3_bucket_public_access_block.website_pab ]
 }
 
-# CodeStar Connection for GitHub
-resource "aws_codestarconnections_connection" "github" {
-  name          = "antigravity-github-conn"
-  provider_type = "GitHub"
-  tags          = local.common_tags
-}
-
-# CodeBuild Role
-resource "aws_iam_role" "codebuild_role" {
-  name = "codebuild-role-antigravity-v2"
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-         Effect = "Allow",
-         Principal = { Service = "codebuild.amazonaws.com" },
-         Action = "sts:AssumeRole"
-      }
-    ]
-  })
+# IAM User for GitHub Actions
+resource "aws_iam_user" "github_actions" {
+  name = "github-actions-deployer"
   tags = local.common_tags
 }
 
-resource "aws_iam_role_policy" "codebuild_policy" {
-  name = "codebuild-policy-antigravity-v2"
-  role = aws_iam_role.codebuild_role.id
+resource "aws_iam_access_key" "github_actions_key" {
+  user = aws_iam_user.github_actions.name
+}
+
+resource "aws_iam_user_policy" "github_actions_policy" {
+  name = "github-actions-s3-deploy"
+  user = aws_iam_user.github_actions.name
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -100,174 +68,33 @@ resource "aws_iam_role_policy" "codebuild_policy" {
         Effect = "Allow"
         Action = [
           "s3:PutObject",
-          "s3:GetObject",
-          "s3:GetObjectVersion",
-          "s3:GetBucketAcl",
-          "s3:GetBucketLocation"
-        ]
-        Resource = [
-          aws_s3_bucket.artifacts.arn,
-          "${aws_s3_bucket.artifacts.arn}/*",
-          aws_s3_bucket.website.arn,
-          "${aws_s3_bucket.website.arn}/*"
-        ]
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "logs:CreateLogGroup",
-          "logs:CreateLogStream",
-          "logs:PutLogEvents"
-        ]
-        Resource = "*"
-      }
-    ]
-  })
-}
-
-# CodePipeline Role
-resource "aws_iam_role" "codepipeline_role" {
-  name = "codepipeline-role-antigravity-v2"
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-         Effect = "Allow",
-         Principal = { Service = "codepipeline.amazonaws.com" },
-         Action = "sts:AssumeRole"
-      }
-    ]
-  })
-  tags = local.common_tags
-}
-
-resource "aws_iam_role_policy" "codepipeline_policy" {
-  name = "codepipeline-policy-antigravity-v2"
-  role = aws_iam_role.codepipeline_role.id
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "s3:GetObject",
-          "s3:GetObjectVersion",
-          "s3:GetBucketVersioning",
           "s3:PutObjectAcl",
-          "s3:PutObject"
+          "s3:GetObject",
+          "s3:DeleteObject",
+          "s3:ListBucket"
         ]
         Resource = [
-          aws_s3_bucket.artifacts.arn,
-          "${aws_s3_bucket.artifacts.arn}/*",
           aws_s3_bucket.website.arn,
           "${aws_s3_bucket.website.arn}/*"
         ]
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "codebuild:BatchGetBuilds",
-          "codebuild:StartBuild"
-        ]
-        Resource = "*"
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "codestar-connections:UseConnection"
-        ]
-        Resource = aws_codestarconnections_connection.github.arn
       }
     ]
   })
 }
 
-# CodeBuild Project
-resource "aws_codebuild_project" "build" {
-  name          = "antigravity-build"
-  description   = "Builds the static website"
-  service_role  = aws_iam_role.codebuild_role.arn
-  tags          = local.common_tags
-
-  artifacts {
-    type = "CODEPIPELINE"
-  }
-
-  environment {
-    compute_type                = "BUILD_GENERAL1_SMALL"
-    image                       = "aws/codebuild/amazonlinux2-x86_64-standard:4.0"
-    type                        = "LINUX_CONTAINER"
-    image_pull_credentials_type = "CODEBUILD"
-  }
-
-  source {
-    type      = "CODEPIPELINE"
-    buildspec = "buildspec.yml"
-  }
-
-  cache {
-    type  = "LOCAL"
-    modes = ["LOCAL_CUSTOM_CACHE"]
-  }
+output "github_actions_access_key_id" {
+  value = aws_iam_access_key.github_actions_key.id
 }
 
-# CodePipeline
-resource "aws_codepipeline" "pipeline" {
-  name     = "antigravity-pipeline"
-  role_arn = aws_iam_role.codepipeline_role.arn
-  tags     = local.common_tags
+output "github_actions_secret_access_key" {
+  value = aws_iam_access_key.github_actions_key.secret
+  sensitive = true
+}
 
-  artifact_store {
-    location = aws_s3_bucket.artifacts.bucket
-    type     = "S3"
-  }
+output "website_bucket_name" {
+  value = aws_s3_bucket.website.bucket
+}
 
-  stage {
-    name = "Source"
-    action {
-      name             = "Source"
-      category         = "Source"
-      owner            = "AWS"
-      provider         = "CodeStarSourceConnection"
-      version          = "1"
-      output_artifacts = ["source_output"]
-      configuration = {
-        ConnectionArn    = aws_codestarconnections_connection.github.arn
-        FullRepositoryId = var.github_repo_id
-        BranchName       = "main"
-      }
-    }
-  }
-
-  stage {
-    name = "Build"
-    action {
-      name             = "Build"
-      category         = "Build"
-      owner            = "AWS"
-      provider         = "CodeBuild"
-      input_artifacts  = ["source_output"]
-      output_artifacts = ["build_output"]
-      version          = "1"
-      configuration = {
-        ProjectName = aws_codebuild_project.build.name
-      }
-    }
-  }
-
-  stage {
-    name = "Deploy"
-    action {
-      name            = "DeployToS3"
-      category        = "Deploy"
-      owner           = "AWS"
-      provider        = "S3"
-      input_artifacts = ["build_output"]
-      version         = "1"
-      configuration = {
-        BucketName = aws_s3_bucket.website.bucket
-        Extract    = "true"
-      }
-    }
-  }
+output "website_url" {
+  value = "http://${aws_s3_bucket_website_configuration.website.website_endpoint}"
 }
