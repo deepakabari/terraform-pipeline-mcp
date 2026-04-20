@@ -9,44 +9,67 @@ locals {
   }
 }
 
-# Static Website Bucket
-resource "aws_s3_bucket" "website" {
-  bucket        = var.bucket_name
-  force_destroy = true
-  tags          = local.common_tags
+# ──────────────────────────────────────────────
+# Elastic Beanstalk Application & Environment
+# ──────────────────────────────────────────────
+
+resource "aws_elastic_beanstalk_application" "app" {
+  name        = var.project_name
+  description = "Node Express CRUD App"
 }
 
-resource "aws_s3_bucket_website_configuration" "website" {
-  bucket = aws_s3_bucket.website.id
-  index_document {
-    suffix = "index.html"
+# Find the latest Node.js 20 Amazon Linux 2023 stack
+data "aws_elastic_beanstalk_solution_stack" "nodejs" {
+  most_recent = true
+  name_regex  = "^64bit Amazon Linux 2023 (.*) running Node.js 20(.*)$"
+}
+
+resource "aws_elastic_beanstalk_environment" "env" {
+  name                = "${var.project_name}-env"
+  application         = aws_elastic_beanstalk_application.app.name
+  solution_stack_name = data.aws_elastic_beanstalk_solution_stack.nodejs.name
+
+  setting {
+    namespace = "aws:autoscaling:launchconfiguration"
+    name      = "IamInstanceProfile"
+    value     = aws_iam_instance_profile.eb_profile.name
+  }
+
+  setting {
+    namespace = "aws:elasticbeanstalk:environment"
+    name      = "EnvironmentType"
+    value     = "SingleInstance" # No load balancer to keep costs low
   }
 }
 
-resource "aws_s3_bucket_public_access_block" "website_pab" {
-  bucket                  = aws_s3_bucket.website.id
-  block_public_acls       = false
-  block_public_policy     = false
-  ignore_public_acls      = false
-  restrict_public_buckets = false
-}
+# IAM Role/Profile for EC2 instances inside Elastic Beanstalk
+resource "aws_iam_role" "eb_role" {
+  name = "${var.project_name}-eb-ec2-role"
 
-resource "aws_s3_bucket_policy" "website_policy" {
-  bucket = aws_s3_bucket.website.id
-  policy = jsonencode({
+  assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
-        Sid       = "PublicReadGetObject"
-        Effect    = "Allow"
-        Principal = "*"
-        Action    = "s3:GetObject"
-        Resource  = "${aws_s3_bucket.website.arn}/*"
+        Effect = "Allow"
+        Principal = {
+          Service = "ec2.amazonaws.com"
+        }
+        Action = "sts:AssumeRole"
       }
     ]
   })
-  depends_on = [aws_s3_bucket_public_access_block.website_pab]
 }
+
+resource "aws_iam_role_policy_attachment" "eb_web_tier" {
+  role       = aws_iam_role.eb_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AWSElasticBeanstalkWebTier"
+}
+
+resource "aws_iam_instance_profile" "eb_profile" {
+  name = "${var.project_name}-eb-profile"
+  role = aws_iam_role.eb_role.name
+}
+
 
 # ──────────────────────────────────────────────
 # S3 — CodePipeline Artifact Store
@@ -84,8 +107,6 @@ resource "aws_iam_role" "codebuild_role" {
       }
     ]
   })
-
-  tags = local.common_tags
 }
 
 resource "aws_iam_role_policy" "codebuild_policy" {
@@ -109,28 +130,12 @@ resource "aws_iam_role_policy" "codebuild_policy" {
         Action = [
           "s3:GetObject",
           "s3:PutObject",
-          "s3:PutObjectAcl",
-          "s3:DeleteObject",
-          "s3:ListBucket",
-          "s3:GetBucketLocation"
+          "s3:GetObjectVersion"
         ]
         Resource = [
-          aws_s3_bucket.website.arn,
-          "${aws_s3_bucket.website.arn}/*",
           aws_s3_bucket.codepipeline_artifacts.arn,
           "${aws_s3_bucket.codepipeline_artifacts.arn}/*"
         ]
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "codebuild:CreateReportGroup",
-          "codebuild:CreateReport",
-          "codebuild:UpdateReport",
-          "codebuild:BatchPutTestCases",
-          "codebuild:BatchPutCodeCoverages"
-        ]
-        Resource = "*"
       }
     ]
   })
@@ -154,8 +159,6 @@ resource "aws_iam_role" "codepipeline_role" {
       }
     ]
   })
-
-  tags = local.common_tags
 }
 
 resource "aws_iam_role_policy" "codepipeline_policy" {
@@ -170,15 +173,11 @@ resource "aws_iam_role_policy" "codepipeline_policy" {
         Action = [
           "s3:GetObject",
           "s3:PutObject",
-          "s3:ListBucket",
-          "s3:DeleteObject",
-          "s3:GetBucketVersioning"
+          "s3:GetObjectVersion"
         ]
         Resource = [
           aws_s3_bucket.codepipeline_artifacts.arn,
-          "${aws_s3_bucket.codepipeline_artifacts.arn}/*",
-          aws_s3_bucket.website.arn,
-          "${aws_s3_bucket.website.arn}/*"
+          "${aws_s3_bucket.codepipeline_artifacts.arn}/*"
         ]
       },
       {
@@ -193,6 +192,22 @@ resource "aws_iam_role_policy" "codepipeline_policy" {
         Effect   = "Allow"
         Action   = "codestar-connections:UseConnection"
         Resource = aws_codestarconnections_connection.github.arn
+      },
+      # Elastic Beanstalk Deploy Permissions
+      {
+        Effect = "Allow"
+        Action = [
+          "elasticbeanstalk:CreateApplicationVersion",
+          "elasticbeanstalk:UpdateEnvironment",
+          "elasticbeanstalk:DescribeApplicationVersions",
+          "elasticbeanstalk:DescribeEnvironments",
+          "autoscaling:DescribeAutoScalingGroups",
+          "autoscaling:ResumeProcesses",
+          "autoscaling:SuspendProcesses",
+          "ec2:DescribeInstances",
+          "cloudformation:DescribeStackResources"
+        ]
+        Resource = "*"
       }
     ]
   })
@@ -203,9 +218,8 @@ resource "aws_iam_role_policy" "codepipeline_policy" {
 # ──────────────────────────────────────────────
 resource "aws_codebuild_project" "build" {
   name         = "${var.project_name}-build"
-  description  = "Build project for ${var.project_name}"
+  description  = "Packages project for EB"
   service_role = aws_iam_role.codebuild_role.arn
-  tags         = local.common_tags
 
   artifacts {
     type = "CODEPIPELINE"
@@ -215,29 +229,11 @@ resource "aws_codebuild_project" "build" {
     compute_type                = "BUILD_GENERAL1_SMALL"
     image                       = "aws/codebuild/amazonlinux2-x86_64-standard:5.0"
     type                        = "LINUX_CONTAINER"
-    image_pull_credentials_type = "CODEBUILD"
-
-    environment_variable {
-      name  = "S3_BUCKET"
-      value = var.bucket_name
-    }
-
-    environment_variable {
-      name  = "AWS_DEFAULT_REGION"
-      value = var.region
-    }
   }
 
   source {
     type      = "CODEPIPELINE"
     buildspec = "buildspec.yml"
-  }
-
-  logs_config {
-    cloudwatch_logs {
-      group_name  = "/aws/codebuild/${var.project_name}"
-      stream_name = "build-log"
-    }
   }
 }
 
@@ -247,14 +243,13 @@ resource "aws_codebuild_project" "build" {
 resource "aws_codepipeline" "pipeline" {
   name     = "${var.project_name}-pipeline"
   role_arn = aws_iam_role.codepipeline_role.arn
-  tags     = local.common_tags
 
   artifact_store {
     location = aws_s3_bucket.codepipeline_artifacts.bucket
     type     = "S3"
   }
 
-  # Stage 1 — Source (GitHub via CodeStar Connection)
+  # Stage 1 — Source (GitHub)
   stage {
     name = "Source"
 
@@ -275,7 +270,7 @@ resource "aws_codepipeline" "pipeline" {
     }
   }
 
-  # Stage 2 — Build (CodeBuild)
+  # Stage 2 — Package (CodeBuild)
   stage {
     name = "Build"
 
@@ -294,21 +289,21 @@ resource "aws_codepipeline" "pipeline" {
     }
   }
 
-  # Stage 3 — Deploy to S3
+  # Stage 3 — Deploy to Elastic Beanstalk
   stage {
     name = "Deploy"
 
     action {
-      name            = "Deploy_to_S3"
+      name            = "Deploy_to_EB"
       category        = "Deploy"
       owner           = "AWS"
-      provider        = "S3"
+      provider        = "ElasticBeanstalk"
       version         = "1"
       input_artifacts = ["build_output"]
 
       configuration = {
-        BucketName = aws_s3_bucket.website.bucket
-        Extract    = "true"
+        ApplicationName = aws_elastic_beanstalk_application.app.name
+        EnvironmentName = aws_elastic_beanstalk_environment.env.name
       }
     }
   }
@@ -317,23 +312,15 @@ resource "aws_codepipeline" "pipeline" {
 # ──────────────────────────────────────────────
 # Outputs
 # ──────────────────────────────────────────────
-output "website_bucket_name" {
-  value = aws_s3_bucket.website.bucket
-}
-
-output "website_url" {
-  value = "http://${aws_s3_bucket_website_configuration.website.website_endpoint}"
+output "elastic_beanstalk_environment_url" {
+  description = "The URL where your Node.js API is running"
+  value       = "http://${aws_elastic_beanstalk_environment.env.cname}"
 }
 
 output "pipeline_name" {
   value = aws_codepipeline.pipeline.name
 }
 
-output "codebuild_project_name" {
-  value = aws_codebuild_project.build.name
-}
-
 output "codestar_connection_arn" {
-  description = "ARN of the CodeStar connection — must be confirmed in AWS Console after first apply"
-  value       = aws_codestarconnections_connection.github.arn
+  value = aws_codestarconnections_connection.github.arn
 }
