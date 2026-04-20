@@ -13,7 +13,7 @@ variable "profile" {
 variable "bucket_name" {
   description = "Name for the S3 bucket that hosts the static website"
   type        = string
-  default     = "node-express-crud-deploy-982689565504-us-east-1"
+  default     = "terraform-pipeline-demo"
 }
 
 variable "project_name" {
