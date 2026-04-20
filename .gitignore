@@ -1,7 +1,14 @@
 node_modules
+dist/
+plan.txt
+
+# Terraform
 .terraform
 .terraform.lock.hcl
 terraform.tfstate
 terraform.tfstate.backup
+
+# Editor / AI
 .claude
 .claudeignore
+.agents
