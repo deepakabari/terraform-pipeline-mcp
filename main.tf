@@ -1,3 +1,11 @@
+terraform {
+  backend "s3" {
+    bucket = "node-express-crud-tfstate-982689565504"
+    key    = "state/terraform.tfstate"
+    region = "us-east-1"
+  }
+}
+
 provider "aws" {
   region  = var.region
   profile = var.profile
@@ -186,7 +194,10 @@ resource "aws_iam_role_policy" "codepipeline_policy" {
           "codebuild:BatchGetBuilds",
           "codebuild:StartBuild"
         ]
-        Resource = aws_codebuild_project.build.arn
+        Resource = [
+          aws_codebuild_project.build.arn,
+          aws_codebuild_project.terraform_apply.arn
+        ]
       },
       {
         Effect   = "Allow"
@@ -205,12 +216,70 @@ resource "aws_iam_role_policy" "codepipeline_policy" {
           "autoscaling:ResumeProcesses",
           "autoscaling:SuspendProcesses",
           "ec2:DescribeInstances",
-          "cloudformation:DescribeStackResources"
+          "cloudformation:DescribeStackResources",
+          "s3:CreateBucket",
+          "s3:ListBucket",
+          "s3:PutObject",
+          "s3:GetObject"
         ]
         Resource = "*"
       }
     ]
   })
+}
+
+# ──────────────────────────────────────────────
+# IAM — Terraform CodeBuild Service Role
+# ──────────────────────────────────────────────
+resource "aws_iam_role" "terraform_codebuild_role" {
+  name = "terraform-codebuild-${var.project_name}-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Service = "codebuild.amazonaws.com"
+        }
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "terraform_admin_policy" {
+  role       = aws_iam_role.terraform_codebuild_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
+}
+
+# ──────────────────────────────────────────────
+# CodeBuild — Terraform Apply Project
+# ──────────────────────────────────────────────
+resource "aws_codebuild_project" "terraform_apply" {
+  name         = "${var.project_name}-terraform-apply"
+  description  = "Runs terraform apply in CodePipeline"
+  service_role = aws_iam_role.terraform_codebuild_role.arn
+
+  artifacts {
+    type = "CODEPIPELINE"
+  }
+
+  environment {
+    compute_type                = "BUILD_GENERAL1_SMALL"
+    image                       = "aws/codebuild/amazonlinux2-x86_64-standard:5.0"
+    type                        = "LINUX_CONTAINER"
+    
+    environment_variable {
+      name  = "TF_IN_AUTOMATION"
+      value = "true"
+    }
+  }
+
+  source {
+    type      = "CODEPIPELINE"
+    buildspec = "buildspec-tf.yml"
+  }
 }
 
 # ──────────────────────────────────────────────
@@ -289,9 +358,27 @@ resource "aws_codepipeline" "pipeline" {
     }
   }
 
-  # Stage 3 — Deploy to Elastic Beanstalk
+  # Stage 3 — Terraform Deploy
   stage {
-    name = "Deploy"
+    name = "Terraform_Apply"
+
+    action {
+      name             = "Terraform_Deploy"
+      category         = "Build"
+      owner            = "AWS"
+      provider         = "CodeBuild"
+      version          = "1"
+      input_artifacts  = ["source_output"]
+
+      configuration = {
+        ProjectName = aws_codebuild_project.terraform_apply.name
+      }
+    }
+  }
+
+  # Stage 4 — Deploy App to Elastic Beanstalk
+  stage {
+    name = "Deploy_App"
 
     action {
       name            = "Deploy_to_EB"
