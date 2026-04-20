@@ -1,23 +1,10 @@
 version: 0.2
 
 phases:
-  install:
-    runtime-versions:
-      nodejs: 18
-    commands:
-      - echo "Installing dependencies..."
-      - npm install
   build:
     commands:
-      - echo "Building project..."
-      - npm run build
-      - mkdir -p dist
-      - cp -r src package.json dist/
+      - echo "Preparing source code for Elastic Beanstalk..."
 artifacts:
   files:
     - '**/*'
-  base-directory: 'dist'
-
-cache:
-  paths:
-    - 'node_modules/**/*'
+  base-directory: '.'
