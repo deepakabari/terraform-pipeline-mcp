@@ -219,7 +219,10 @@ resource "aws_iam_role_policy" "codepipeline_policy" {
           "s3:CreateBucket",
           "s3:ListBucket",
           "s3:PutObject",
-          "s3:GetObject"
+          "s3:GetObject",
+          "s3:PutBucketOwnershipControls",
+          "s3:PutBucketAcl",
+          "s3:PutBucketPolicy"
         ]
         Resource = "*"
       }
