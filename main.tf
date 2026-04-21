@@ -215,16 +215,20 @@ resource "aws_iam_role_policy" "codepipeline_policy" {
           "autoscaling:ResumeProcesses",
           "autoscaling:SuspendProcesses",
           "ec2:DescribeInstances",
-          "cloudformation:DescribeStackResources",
-          "s3:CreateBucket",
-          "s3:ListBucket",
-          "s3:PutObject",
-          "s3:GetObject",
-          "s3:PutBucketOwnershipControls",
-          "s3:PutBucketAcl",
-          "s3:PutBucketPolicy"
+          "cloudformation:DescribeStackResources"
         ]
         Resource = "*"
+      },
+      {
+        # Broad permissions needed for CodePipeline to initialize and manage EB deployment buckets
+        Effect = "Allow"
+        Action = [
+          "s3:*"
+        ]
+        Resource = [
+          "arn:aws:s3:::elasticbeanstalk-*",
+          "arn:aws:s3:::elasticbeanstalk-*/*"
+        ]
       }
     ]
   })
