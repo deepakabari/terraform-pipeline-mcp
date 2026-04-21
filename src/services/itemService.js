@@ -1,6 +1,5 @@
 const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
 const { DynamoDBDocumentClient, ScanCommand, GetCommand, PutCommand, DeleteCommand } = require("@aws-sdk/lib-dynamodb");
-const { v4: uuidv4 } = require('uuid');
 
 const client = new DynamoDBClient({ region: process.env.AWS_REGION || 'us-east-1' });
 const docClient = DynamoDBDocumentClient.from(client);
@@ -20,7 +19,17 @@ const getItemById = async (id) => {
 };
 
 const createItem = async (itemData) => {
-    const newItem = { id: uuidv4(), ...itemData };
+    // Generate an incremental ID by grabbing all existing items and finding the highest ID
+    const allItems = await getAllItems();
+    
+    let nextId = 1;
+    if (allItems.length > 0) {
+        // Convert string IDs back to numbers to find the maximum value
+        const maxId = Math.max(...allItems.map(item => parseInt(item.id, 10)));
+        nextId = maxId + 1;
+    }
+
+    const newItem = { id: String(nextId), ...itemData };
     const command = new PutCommand({ TableName: TABLE_NAME, Item: newItem });
     await docClient.send(command);
     return newItem;
