@@ -8,6 +8,9 @@
     "build": "echo 'No complicated build step needed for plain Express app, ready to deploy!'"
   },
   "dependencies": {
-    "express": "^4.21.0"
+    "@aws-sdk/client-dynamodb": "^3.1033.0",
+    "@aws-sdk/lib-dynamodb": "^3.1033.0",
+    "express": "^4.21.0",
+    "uuid": "^14.0.0"
   }
 }

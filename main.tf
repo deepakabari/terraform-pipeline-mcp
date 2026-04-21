@@ -43,6 +43,12 @@ resource "aws_elastic_beanstalk_environment" "env" {
   }
 
   setting {
+    namespace = "aws:elasticbeanstalk:application:environment"
+    name      = "DYNAMODB_TABLE"
+    value     = aws_dynamodb_table.items.name
+  }
+
+  setting {
     namespace = "aws:elasticbeanstalk:environment"
     name      = "EnvironmentType"
     value     = "SingleInstance" # No load balancer to keep costs low
@@ -75,6 +81,44 @@ resource "aws_iam_role_policy_attachment" "eb_web_tier" {
 resource "aws_iam_instance_profile" "eb_profile" {
   name = "${var.project_name}-eb-profile"
   role = aws_iam_role.eb_role.name
+}
+
+# ──────────────────────────────────────────────
+# DynamoDB Table
+# ──────────────────────────────────────────────
+resource "aws_dynamodb_table" "items" {
+  name           = "${var.project_name}-items"
+  billing_mode   = "PAY_PER_REQUEST"
+  hash_key       = "id"
+
+  attribute {
+    name = "id"
+    type = "S"
+  }
+
+  tags = local.common_tags
+}
+
+resource "aws_iam_role_policy" "eb_dynamodb_policy" {
+  name = "${var.project_name}-eb-dynamodb"
+  role = aws_iam_role.eb_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "dynamodb:PutItem",
+          "dynamodb:GetItem",
+          "dynamodb:UpdateItem",
+          "dynamodb:DeleteItem",
+          "dynamodb:Scan"
+        ]
+        Resource = aws_dynamodb_table.items.arn
+      }
+    ]
+  })
 }
 
 

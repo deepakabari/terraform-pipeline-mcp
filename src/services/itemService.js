@@ -1,38 +1,47 @@
-let items = [
-    { id: '1', name: 'MacBook Pro', price: 1999 },
-    { id: '2', name: 'AirPods Max', price: 549 }
-];
+const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
+const { DynamoDBDocumentClient, ScanCommand, GetCommand, PutCommand, DeleteCommand } = require("@aws-sdk/lib-dynamodb");
+const { v4: uuidv4 } = require('uuid');
 
-const getAllItems = () => {
-    return items;
+const client = new DynamoDBClient({ region: process.env.AWS_REGION || 'us-east-1' });
+const docClient = DynamoDBDocumentClient.from(client);
+
+const TABLE_NAME = process.env.DYNAMODB_TABLE || 'node-express-crud-items';
+
+const getAllItems = async () => {
+    const command = new ScanCommand({ TableName: TABLE_NAME });
+    const response = await docClient.send(command);
+    return response.Items || [];
 };
 
-const getItemById = (id) => {
-    return items.find(item => item.id === id);
+const getItemById = async (id) => {
+    const command = new GetCommand({ TableName: TABLE_NAME, Key: { id } });
+    const response = await docClient.send(command);
+    return response.Item || null;
 };
 
-const createItem = (itemData) => {
-    const newItem = {
-        id: String(Date.now()),
-        ...itemData
-    };
-    items.push(newItem);
+const createItem = async (itemData) => {
+    const newItem = { id: uuidv4(), ...itemData };
+    const command = new PutCommand({ TableName: TABLE_NAME, Item: newItem });
+    await docClient.send(command);
     return newItem;
 };
 
-const updateItem = (id, itemData) => {
-    const index = items.findIndex(item => item.id === id);
-    if (index === -1) return null;
+const updateItem = async (id, itemData) => {
+    let existing = await getItemById(id);
+    if (!existing) return null;
     
-    items[index] = { ...items[index], ...itemData, id };
-    return items[index];
+    let updated = { ...existing, ...itemData, id };
+    const command = new PutCommand({ TableName: TABLE_NAME, Item: updated });
+    await docClient.send(command);
+    return updated;
 };
 
-const deleteItem = (id) => {
-    const index = items.findIndex(item => item.id === id);
-    if (index === -1) return false;
+const deleteItem = async (id) => {
+    let existing = await getItemById(id);
+    if (!existing) return false;
     
-    items.splice(index, 1);
+    const command = new DeleteCommand({ TableName: TABLE_NAME, Key: { id } });
+    await docClient.send(command);
     return true;
 };
 
